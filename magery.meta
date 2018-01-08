@@ -1,0 +1,6 @@
+((synopsis "HTML templates for progressive enhancement")
+ (author "Caolan McMahon")
+ (category web)
+ (license "BSD")
+ (depends html-parser)
+ (test-depends test medea))
