@@ -2,5 +2,5 @@
  (author "Caolan McMahon")
  (category web)
  (license "BSD")
- (depends html-parser)
+ (depends html-parser defstruct)
  (test-depends test medea))
