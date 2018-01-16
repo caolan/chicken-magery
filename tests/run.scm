@@ -24,7 +24,7 @@
             html->sxml))))
 
 (test-group "magery-tests suite"
-  (for-each run-test (take test-dirs 2)))
+  (for-each run-test (take test-dirs 6)))
 
 
 (test-exit)

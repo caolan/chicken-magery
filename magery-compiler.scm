@@ -4,7 +4,7 @@
 (read-templates)
 
 (import chicken scheme)
-(use html-parser data-structures miscmacros defstruct srfi-1)
+(use html-parser data-structures miscmacros defstruct srfi-1 comparse)
 
 (defstruct template
   name
@@ -21,6 +21,12 @@
 
 (define-record-printer (raw x out)
   (fprintf out "#<raw ~S>" (raw-value x)))
+
+(define-record variable
+  path)
+
+(define-record-printer (variable x out)
+  (fprintf out "#<variable ~S>" (variable-path x)))
 
 (define (magery-syntax-error message)
   (abort
@@ -63,8 +69,9 @@
        (eq? '@ (caadr node))))
 
 (define (attributes node)
-  (assert (has-attributes? node))
-  (cdadr node))
+  (if (has-attributes? node)
+      (cdadr node)
+      '()))
   
 (define (attribute-exists? node name)
   (and (has-attributes? node)
@@ -92,12 +99,41 @@
                  'message "Not implemented: <template> tag without data-template attribute"
                  'location 'compile-element))))
     (else
-     `(,(make-raw (sprintf "<~A>" (tagname node)))
+     `(,(make-raw (sprintf "<~A" (tagname node)))
+       ,@(map (lambda (attr)
+                (list (make-raw (sprintf " ~A=\"" (car attr)))
+                      (compile-variables (cadr attr))
+                      (make-raw "\"")))
+              (attributes node))
+       ,(make-raw ">")
        ,@(map (cut compile-node <> queue #f) (children node))
        ,(make-raw (sprintf "</~A>" (tagname node)))))))
 
+(define variable-expansion
+  (bind (enclosed-by (char-seq "{{")
+                     (as-string (one-or-more (none-of* (char-seq "}}") item)))
+                     (char-seq "}}"))
+        (lambda (path)
+          (result
+           (make-variable (map string->symbol
+                               (string-split path ".")))))))
+
+(define raw-text
+  (bind (as-string (one-or-more (none-of* (char-seq "{{") item)))
+        (compose result make-raw)))
+
+(define template-string
+  (one-or-more (any-of variable-expansion raw-text)))
+
+(define (compile-variables value)
+  (assert (string? value))
+  (parse template-string (->parser-input value)))
+
 (define (compile-text node)
-  (make-raw node))
+  (compile-variables node))
+
+(define (compile-comment node)
+  (make-raw (sprintf "<!--~A-->" (last node))))
 
 (define (children node)
   (let ((rest (cdr node)))
@@ -117,7 +153,9 @@
     (for-each
      (cut compile-node <> queue is-root)
      (children node)))
-   ((or (doctype? node) (comment? node))
+   ((comment? node)
+    (compile-comment node))
+   ((doctype? node)
     ;; ignore
     #f)
    (else
@@ -139,12 +177,15 @@
            (cons (make-raw (string-append (raw-value x) (raw-value (car collapsed))))
                  (cdr collapsed))
            (cons x collapsed)))
+      ((variable? x)
+       (cons x collapsed))
       ((pair? x)
        (if (null? collapsed)
            (collapse-syntax-tree x)
            (append (collapse-syntax-tree (append x (take collapsed 1)))
                    (cdr collapsed))))
-      ((not x)
+      ((or (not x) (null? x))
+       ;; skip #f and null
        collapsed)
       (else
        (abort (make-property-condition
@@ -165,9 +206,14 @@
 (define (raw->scheme x)
   `(write-string ,(raw-value x)))
 
+(define (variable->scheme x)
+  `(write-string
+    (html-escape (stringify (lookup (quote ,(variable-path x)) data)))))
+
 (define (->scheme x)
   (cond ((template? x) (template->scheme x))
         ((raw? x) (raw->scheme x))
+        ((variable? x) (variable->scheme x))
         (else
          (abort (make-property-condition
                  'exn
