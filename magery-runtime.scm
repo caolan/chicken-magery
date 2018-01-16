@@ -7,7 +7,7 @@
  html-escape)
 
 (import chicken scheme)
-(use srfi-69 data-structures irregex)
+(use srfi-69 data-structures irregex srfi-13)
 
 (define templates
   (make-parameter (make-hash-table
@@ -16,14 +16,34 @@
 
 (define (lookup path data)
   (cond
-   ((not data) #f)
    ((null? path) data)
+   ((eq? data 'undefined)
+    'undefined)
+   ((vector? data)
+    (if (equal? path '(length))
+        (vector-length data)
+        'undefined))
    (else
     (lookup (cdr path)
-            (alist-ref (car path) data eq? #f))))) 
+            (alist-ref (car path) data eq? 'undefined)))))
 
 (define (stringify x)
-  (->string x))
+  (cond
+   ((string? x) x)
+   ((number? x) (number->string x))
+   ((eq? x 'undefined) "")
+   ((eq? x 'null) "")
+   ((eq? x #t) "true")
+   ((eq? x #f) "false")
+   ((vector? x) (string-join (map stringify (vector->list x)) ","))
+   ((or (pair? x) (null? x)) "[object Object]")
+   (else
+    (abort (make-composite-condition
+            (make-property-condition
+             'exn
+             'location 'stringify
+             'message (sprintf "Cannot stringify non-JSON value: ~S~n" x))
+            (make-property-condition 'magery))))))
 
 (define (html-escape str)
   (irregex-replace/all

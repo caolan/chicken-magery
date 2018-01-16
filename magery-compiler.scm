@@ -4,7 +4,18 @@
 (read-templates)
 
 (import chicken scheme)
-(use html-parser data-structures miscmacros defstruct srfi-1 comparse)
+
+(use html-parser
+     data-structures
+     miscmacros
+     defstruct
+     srfi-1
+     comparse
+     srfi-13)
+
+(define SELF-CLOSING
+  '(area base br col embed hr img input keygen link menuitem meta
+         param source track wbr))
 
 (defstruct template
   name
@@ -99,15 +110,17 @@
                  'message "Not implemented: <template> tag without data-template attribute"
                  'location 'compile-element))))
     (else
-     `(,(make-raw (sprintf "<~A" (tagname node)))
-       ,@(map (lambda (attr)
-                (list (make-raw (sprintf " ~A=\"" (car attr)))
-                      (compile-variables (cadr attr))
-                      (make-raw "\"")))
-              (attributes node))
-       ,(make-raw ">")
-       ,@(map (cut compile-node <> queue #f) (children node))
-       ,(make-raw (sprintf "</~A>" (tagname node)))))))
+     (list (make-raw (sprintf "<~A" (tagname node)))
+           (map (lambda (attr)
+                  (list (make-raw (sprintf " ~A=\"" (car attr)))
+                        (compile-variables (cadr attr))
+                        (make-raw "\"")))
+                (attributes node))
+           (make-raw ">")
+           (if (memq (tagname node) SELF-CLOSING)
+               '()
+               (list (map (cut compile-node <> queue #f) (children node))
+                     (make-raw (sprintf "</~A>" (tagname node)))))))))
 
 (define variable-expansion
   (bind (enclosed-by (char-seq "{{")
@@ -115,7 +128,7 @@
                      (char-seq "}}"))
         (lambda (path)
           (result
-           (make-variable (map string->symbol
+           (make-variable (map (compose string->symbol string-trim-both)
                                (string-split path ".")))))))
 
 (define raw-text
