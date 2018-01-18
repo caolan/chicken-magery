@@ -2,5 +2,5 @@
  (author "Caolan McMahon")
  (category web)
  (license "BSD")
- (depends html-parser defstruct comparse)
+ (depends htmlprag comparse srfi-133)
  (test-depends test medea))

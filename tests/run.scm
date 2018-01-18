@@ -1,4 +1,4 @@
-(use test posix files magery html-parser medea)
+(use test posix files magery htmlprag medea)
 
 (define test-directory
   "tests/magery-tests/components")
@@ -18,13 +18,12 @@
     ;; (compile-templates template-file)
     (test (pathname-strip-directory dir)
           expected
-          (with-input-from-string
-              (with-output-to-string
-                (lambda () (template-write 'app-main data)))
-            html->sxml))))
+          (html->sxml
+           (with-output-to-string
+             (lambda () (template-write 'app-main data)))))))
 
 (test-group "magery-tests suite"
-  (for-each run-test (take test-dirs 20)))
+  (for-each run-test (take test-dirs 72)))
 
 
 (test-exit)

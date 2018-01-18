@@ -4,10 +4,13 @@
 (templates
  lookup
  stringify
- html-escape)
+ html-escape
+ truthy?
+ falsy?
+ magery-each)
 
 (import chicken scheme)
-(use srfi-69 data-structures irregex srfi-13)
+(use srfi-69 data-structures irregex srfi-13 srfi-133)
 
 (define templates
   (make-parameter (make-hash-table
@@ -26,6 +29,24 @@
    (else
     (lookup (cdr path)
             (alist-ref (car path) data eq? 'undefined)))))
+
+(define (magery-each name path f data)
+  (let ((iterable (lookup path data)))
+    (when (vector? iterable)
+      (vector-for-each
+       (lambda (v) (f (cons (cons name v) data)))
+       iterable))))
+
+(define (falsy? x)
+  (or (not x)
+      (eq? x 'undefined)
+      (eq? x 'null)
+      (and (number? x) (= 0 x))
+      (and (string? x) (string=? "" x))
+      (and (vector? x) (= 0 (vector-length x)))))
+
+(define truthy?
+  (compose not falsy?))
 
 (define (stringify x)
   (cond
