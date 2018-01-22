@@ -66,7 +66,7 @@
              'message (sprintf "Cannot stringify non-JSON value: ~S~n" x))
             (make-property-condition 'magery))))))
 
-(define (html-escape str)
+(define (html-escape str #!optional keep-quot)
   (irregex-replace/all
    "[<>\"'&]"
    str
@@ -75,7 +75,7 @@
        ((#\<) "&lt;")
        ((#\>) "&gt;")
        ((#\&) "&ampt;")
-       ((#\") "&quot;")
+       ((#\") (if keep-quot "\"" "&quot;"))
        ((#\') "&apos;")))))
 
 )

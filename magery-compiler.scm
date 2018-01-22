@@ -26,6 +26,14 @@
     multiple muted novalidate open readonly required
     reversed selected))
 
+(define SKIPPED-ATTRIBUTES
+  '(data-tagname
+    data-each
+    data-if
+    data-unless))
+
+(define COMPONENT-PASS-THROUGH-ATTRIBUTES
+  '(data-embed))
 
 (define-record template name src children)
 (define-record-printer (template x out)
@@ -33,11 +41,12 @@
            (template-name x)
            (template-children x)))
 
-(define-record template-call name attributes children)
+(define-record template-call name attributes embed children)
 (define-record-printer (template-call x out)
-  (fprintf out "#<template-call ~S ~S ~S>"
+  (fprintf out "#<template-call ~S ~S embed:~S ~S>"
            (template-call-name x)
            (template-call-attributes x)
+           (template-call-embed x)
            (template-call-children x)))
 
 (define-record raw value)
@@ -67,6 +76,13 @@
            (data-each-iterable x)
            (data-each-children x)))
 
+(define-record embedded-data)
+(define-record-printer (embedded-data x out)
+  (fprintf out "#<embedded-data>"))
+
+(define-record conditional-data-embed)
+(define-record-printer (conditional-data-embed x out)
+  (fprintf out "#<conditional-data-embed>"))
 
 (define (magery-syntax-error message)
   (abort
@@ -140,25 +156,31 @@
 
 (define (compile-attributes attrs)
   (map (lambda (attr)
-         (if (memq (attribute-name attr) BOOLEAN-ATTRIBUTES)
-             (let ((parts (compile-variables (attribute-value attr))))
-               (if (and (= 1 (length parts))
-                        (variable? (car parts)))
-                   ;; check truthiness of a single variable
-                   (list (make-data-if
-                          (variable-path (car parts))
-                          (list (make-raw (sprintf " ~A" (attribute-name attr))))))
-                   ;; if it's an interpolated string, boolean attribute is always true
-                   (list (make-raw (sprintf " ~A" (attribute-name attr))))))
-             ;; render normal attribute
-             (list (make-raw (sprintf " ~A=\"" (attribute-name attr)))
-                   (compile-variables (attribute-value attr))
-                   (make-raw "\""))))
+         (cond 
+          ((memq (attribute-name attr) SKIPPED-ATTRIBUTES) #f)
+          ((memq (attribute-name attr) BOOLEAN-ATTRIBUTES)
+           (let ((parts (compile-variables (attribute-value attr))))
+             (if (and (= 1 (length parts))
+                      (variable? (car parts)))
+                 ;; check truthiness of a single variable
+                 (list (make-data-if
+                        (variable-path (car parts))
+                        (list (make-raw (sprintf " ~A" (attribute-name attr))))))
+                 ;; if it's an interpolated string, boolean attribute is always true
+                 (list (make-raw (sprintf " ~A" (attribute-name attr)))))))
+          ((eq? (attribute-name attr) 'data-embed)
+           (make-embedded-data))
+          (else
+           ;; render normal attribute
+           (list (make-raw (sprintf " ~A=\"" (attribute-name attr)))
+                 (compile-variables (attribute-value attr))
+                 (make-raw "\"")))))
        (reverse attrs)))
 
-(define (compile-opening-tag name attrs)
+(define (compile-opening-tag name attrs #!optional component?)
   (list (make-raw (sprintf "<~A" name))
         (compile-attributes attrs)
+        (and component? (make-conditional-data-embed))
         (make-raw ">")))
 
 (define (compile-closing-tag name)
@@ -174,7 +196,7 @@
                 (string->symbol tag)
                 node
                 ;; TODO: assert template tagname follows safe naming scheme
-                `(,(compile-opening-tag tag '())
+                `(,(compile-opening-tag tag (attributes node) #t)
                   ,@(map (cut compile-node <> queue #f) (children node))
                   ,(compile-closing-tag tag))))
              (queue-add! queue node))
@@ -217,7 +239,11 @@
                ;; possible component
                (list (make-template-call
                       (tagname node)
-                      attrs
+                      (filter (lambda (attr)
+                                (not (eq? (attribute-name attr) 'data-embed)))
+                              attrs)
+                      (and (attribute-exists? node 'data-embed)
+                           (string=? (attribute-ref node 'data-embed) "true"))
                       (map (cut compile-node <> queue #f) (children node))))
                ;; normal element
                (list (compile-opening-tag (tagname node) attrs)
@@ -279,7 +305,6 @@
         rest)))
 
 (define (compile-node node queue is-root)
-  (printf "compile-node: ~S~n" node)
   (cond
    ((element? node)
     (compile-element node queue is-root))
@@ -301,7 +326,6 @@
 
 ;; combines adjacent text nodes etc.
 (define (collapse-syntax-tree tree)
-  (printf "collapse-syntax-tree: ~S~n" tree)
   (fold-right
    (lambda (x collapsed)
      (cond
@@ -334,8 +358,13 @@
       ((template-call? x)
        (cons (make-template-call (template-call-name x)
                                  (template-call-attributes x)
+                                 (template-call-embed x)
                                  (collapse-syntax-tree (template-call-children x)))
              collapsed))
+      ((conditional-data-embed? x)
+       (cons x collapsed))
+      ((embedded-data? x)
+       (cons x collapsed))
       ((pair? x)
        (if (null? collapsed)
            (collapse-syntax-tree x)
@@ -355,10 +384,8 @@
   `(hash-table-set!
     (templates)
     (quote ,(template-name x))
-    (lambda (data)
-      ,@(if (null? (template-children x))
-            (list #f)
-            (map ->scheme (template-children x))))))
+    (lambda (data #!optional embed-data)
+      ,@(map ->scheme (template-children x)))))
 
 (define (raw->scheme x)
   `(write-string ,(raw-value x)))
@@ -384,13 +411,31 @@
     data))
 
 (define (template-call->scheme x)
-  `((hash-table-ref (templates) (quote ,(template-call-name x)))
-    (append (list
-             ,@(map (lambda (attr)
-                      `(cons (quote ,(attribute-name attr))
-                             ,(compile-attribute-expansion attr)))
-                    (template-call-attributes x)))
-            data)))
+  `(condition-case
+       ((hash-table-ref (templates) (quote ,(template-call-name x)))
+        (list
+         ,@(map (lambda (attr)
+                  `(cons (quote ,(attribute-name attr))
+                         ,(compile-attribute-expansion attr)))
+                (reverse (template-call-attributes x))))
+        ,(template-call-embed x))
+     ((exn access)
+      (abort
+       (make-composite-condition
+        (make-property-condition
+         'exn
+         'message (sprintf "No such template: <~A>" (quote ,(template-call-name x))))
+        (make-property-condition 'magery))))))
+
+(define (conditional-data-embed->scheme x)
+  `(when embed-data
+     ,(embedded-data->scheme x)))
+
+(define (embedded-data->scheme x)
+  `(begin
+     (write-string " data-context='")
+     (write-string (html-escape (json->string data) #t))
+     (write-string "'")))
 
 (define (->scheme x)
   (cond ((template? x) (template->scheme x))
@@ -400,6 +445,8 @@
         ((data-unless? x) (data-unless->scheme x))
         ((data-each? x) (data-each->scheme x))
         ((template-call? x) (template-call->scheme x))
+        ((conditional-data-embed? x) (conditional-data-embed->scheme x))
+        ((embedded-data? x) (embedded-data->scheme x))
         (else
          (abort (make-property-condition
                  'exn
