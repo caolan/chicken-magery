@@ -41,6 +41,10 @@
            (template-name x)
            (template-children x)))
 
+(define-record template-children)
+(define-record-printer (template-children x out)
+  (fprintf out "#<template-children>"))
+
 (define-record template-call name attributes embed children)
 (define-record-printer (template-call x out)
   (fprintf out "#<template-call ~S ~S embed:~S ~S>"
@@ -141,18 +145,19 @@
 (define (attribute-value attr)
   (if (null? (cdr attr)) "" (cadr attr)))
 
-(define (compile-attribute-expansion attr)
-  (let ((parts (compile-variables (attribute-value attr))))
-    (if (and (= 1 (length parts))
-             (variable? (car parts)))
-        `(lookup (quote ,(variable-path (car parts))) data)
-        `(string-join
-          ,(cons 'list
-                 (map (lambda (part)
-                        (if (raw? part)
-                            (raw-value part)
-                            `(lookup (quote ,(variable-path (car parts))) data)))
-                      parts))))))
+(define (compile-value-expansion val)
+  (let ((parts (compile-variables val)))
+     (if (= 1 (length parts))
+         (if (variable? (car parts)) 
+             `(lookup (quote ,(variable-path (car parts))) data)
+             (raw-value (car parts)))
+         `(string-join
+           ,(cons 'list
+                  (map (lambda (part)
+                         (if (raw? part)
+                             (raw-value part)
+                             `(lookup (quote ,(variable-path (car parts))) data)))
+                       parts))))))
 
 (define (compile-attributes attrs)
   (map (lambda (attr)
@@ -204,6 +209,8 @@
                  'exn
                  'message "Not implemented: <template> tag without data-template attribute"
                  'location 'compile-element))))
+    ((template-children)
+     (make-template-children))
     (else
      (let loop ((attrs '())
                 (processing (attributes node)))
@@ -235,22 +242,33 @@
                     (loop attrs (cdr processing))
                     (loop (cons next attrs) (cdr processing))))))
            ;; finished processing attributes
-           (if (string-contains (symbol->string (tagname node)) "-")
-               ;; possible component
-               (list (make-template-call
-                      (tagname node)
-                      (filter (lambda (attr)
-                                (not (eq? (attribute-name attr) 'data-embed)))
-                              attrs)
-                      (and (attribute-exists? node 'data-embed)
-                           (string=? (attribute-ref node 'data-embed) "true"))
-                      (map (cut compile-node <> queue #f) (children node))))
-               ;; normal element
-               (list (compile-opening-tag (tagname node) attrs)
-                     (if (memq (tagname node) SELF-CLOSING)
-                         '()
-                         (list (map (cut compile-node <> queue #f) (children node))
-                               (compile-closing-tag (tagname node)))))))))))
+           (cond
+            ((eq? (tagname node) 'template-call)
+             (list (make-template-call
+                    (attribute-ref node 'template)
+                    (filter (lambda (attr)
+                              (not (eq? (attribute-name attr) 'data-embed)))
+                            attrs)
+                    (and (attribute-exists? node 'data-embed)
+                         (string=? (attribute-ref node 'data-embed) "true"))
+                    (map (cut compile-node <> queue #f) (children node)))))
+            ((string-contains (symbol->string (tagname node)) "-")
+             ;; possible component
+             (list (make-template-call
+                    (tagname node)
+                    (filter (lambda (attr)
+                              (not (eq? (attribute-name attr) 'data-embed)))
+                            attrs)
+                    (and (attribute-exists? node 'data-embed)
+                         (string=? (attribute-ref node 'data-embed) "true"))
+                    (map (cut compile-node <> queue #f) (children node)))))
+            (else
+             ;; normal element
+             (list (compile-opening-tag (tagname node) attrs)
+                   (if (memq (tagname node) SELF-CLOSING)
+                       '()
+                       (list (map (cut compile-node <> queue #f) (children node))
+                             (compile-closing-tag (tagname node))))))))))))
 
 (define (parse-data-each value)
   (assert (string? value))
@@ -334,6 +352,8 @@
                             (template-src x)
                             (collapse-syntax-tree (template-children x)))
              collapsed))
+      ((template-children? x)
+       (cons x collapsed))
       ((raw? x)
        (if (and (not (null? collapsed))
                 (raw? (car collapsed)))
@@ -384,7 +404,7 @@
   `(hash-table-set!
     (templates)
     (quote ,(template-name x))
-    (lambda (data #!optional embed-data)
+    (lambda (data #!optional inner embed-data)
       ,@(map ->scheme (template-children x)))))
 
 (define (raw->scheme x)
@@ -411,21 +431,29 @@
     data))
 
 (define (template-call->scheme x)
-  `(condition-case
-       ((hash-table-ref (templates) (quote ,(template-call-name x)))
-        (list
-         ,@(map (lambda (attr)
-                  `(cons (quote ,(attribute-name attr))
-                         ,(compile-attribute-expansion attr)))
-                (reverse (template-call-attributes x))))
-        ,(template-call-embed x))
-     ((exn access)
-      (abort
-       (make-composite-condition
-        (make-property-condition
-         'exn
-         'message (sprintf "No such template: <~A>" (quote ,(template-call-name x))))
-        (make-property-condition 'magery))))))
+  `(let ((tmpl ,(if (symbol? (template-call-name x))
+                             `(quote ,(template-call-name x))
+                             `(string->symbol ,(compile-value-expansion
+                                                (template-call-name x))))))
+     (condition-case
+         ((hash-table-ref (templates) tmpl)
+          (list
+           ,@(map (lambda (attr)
+                    `(cons (quote ,(attribute-name attr))
+                           ,(compile-value-expansion (attribute-value attr))))
+                  (reverse (template-call-attributes x))))
+          (lambda ()
+            ,@(if (null? (template-call-children x))
+                  (list #f)
+                  (map ->scheme (template-call-children x))))
+          ,(template-call-embed x))
+       ((exn access)
+        (abort
+         (make-composite-condition
+          (make-property-condition
+           'exn
+           'message (sprintf "No such template: <~A>" tmpl)
+          (make-property-condition 'magery))))))))
 
 (define (conditional-data-embed->scheme x)
   `(when embed-data
@@ -437,6 +465,9 @@
      (write-string (html-escape (json->string data) #t))
      (write-string "'")))
 
+(define (template-children->scheme x)
+  `(when inner (inner)))
+
 (define (->scheme x)
   (cond ((template? x) (template->scheme x))
         ((raw? x) (raw->scheme x))
@@ -447,6 +478,7 @@
         ((template-call? x) (template-call->scheme x))
         ((conditional-data-embed? x) (conditional-data-embed->scheme x))
         ((embedded-data? x) (embedded-data->scheme x))
+        ((template-children? x) (template-children->scheme x))
         (else
          (abort (make-property-condition
                  'exn
@@ -454,7 +486,6 @@
 
 ;; converts AST to scheme source code
 (define (syntax-tree->scheme tree)
-  (printf "syntax-tree->scheme: ~S~n" tree)
   `(begin
      (use magery-runtime)
      ,@(map ->scheme tree)))

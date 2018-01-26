@@ -15,7 +15,6 @@
     ;; TODO: remove debugging output
     (write code)
     (newline)
-    
     (eval code)))
 
 (define (compile-templates filename)

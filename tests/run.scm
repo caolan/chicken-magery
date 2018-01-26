@@ -23,6 +23,6 @@
       (test (pathname-strip-directory dir) expected result))))
 
 (test-group "magery-tests suite"
-  (for-each run-test (take test-dirs 76)))
+  (for-each run-test (take test-dirs 79)))
 
 (test-exit)
