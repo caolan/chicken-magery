@@ -5,10 +5,11 @@
 
 (import chicken scheme)
 
-(use htmlprag
+(use magery-serialize
      data-structures
      miscmacros
      defstruct
+     htmlprag
      comparse
      utils
      srfi-1
@@ -35,6 +36,7 @@
 (define COMPONENT-PASS-THROUGH-ATTRIBUTES
   '(data-embed))
 
+
 (define-record template name src children)
 (define-record-printer (template x out)
   (fprintf out "#<template ~S ~S>"
@@ -44,6 +46,11 @@
 (define-record template-children)
 (define-record-printer (template-children x out)
   (fprintf out "#<template-children>"))
+
+(define-record template-embed name)
+(define-record-printer (template-embed x out)
+  (fprintf out "#<template-embed ~S>"
+           (template-embed-name x)))
 
 (define-record template-call name attributes embed children)
 (define-record-printer (template-call x out)
@@ -197,13 +204,18 @@
      (if (attribute-exists? node 'data-tagname)
          (if is-root
              (let ((tag (attribute-ref node 'data-tagname)))
-               (make-template
-                (string->symbol tag)
-                node
-                ;; TODO: assert template tagname follows safe naming scheme
-                `(,(compile-opening-tag tag (attributes node) #t)
-                  ,@(map (cut compile-node <> queue #f) (children node))
-                  ,(compile-closing-tag tag))))
+               (if (string-contains tag "-")
+                   (make-template
+                    (string->symbol tag)
+                    node
+                    `(,(compile-opening-tag tag (attributes node) #t)
+                      ,@(map (cut compile-node <> queue #f) (children node))
+                      ,(compile-closing-tag tag)))
+                   (abort (make-property-condition
+                           'exn
+                           'message (sprintf "Template name ~S is incorrect, it's mandatory that template name include a \"-\" character"
+                                             tag)
+                           'location 'compile-element))))
              (queue-add! queue node))
          (abort (make-property-condition
                  'exn
@@ -211,6 +223,13 @@
                  'location 'compile-element))))
     ((template-children)
      (make-template-children))
+    ((template-embed)
+     (if (attribute-exists? node 'template)
+         (make-template-embed (attribute-ref node 'template))
+         (abort (make-property-condition
+                 'exn
+                 'message "Not implemented: <template-embed> tag without template attribute"
+                 'location 'compile-element))))
     (else
      (let loop ((attrs '())
                 (processing (attributes node)))
@@ -218,13 +237,27 @@
            (let ((next (car processing)))
              (case (attribute-name next)
                ((data-if)
-                (list
-                 (make-data-if (string->path (attribute-value next))
-                               (loop attrs (cdr processing)))))
+                (if (or (string-contains (attribute-value next) "{{")
+                        (string-contains (attribute-value next) "}}"))
+                    (abort (make-property-condition
+                            'exn
+                            'message (sprintf "Value for attribute data-if is ~S must not contains \"{{\" or \"}}\""
+                                              (attribute-value next))
+                            'location 'compile-element))
+                    (list
+                     (make-data-if (string->path (attribute-value next))
+                                   (loop attrs (cdr processing))))))
                ((data-unless)
-                (list
-                 (make-data-unless (string->path (attribute-value next))
-                                   (loop attrs (cdr processing)))))
+                (if (or (string-contains (attribute-value next) "{{")
+                        (string-contains (attribute-value next) "}}"))
+                    (abort (make-property-condition
+                            'exn
+                            'message (sprintf "Value for attribute data-unless is ~S must not contains \"{{\" or \"}}\""
+                                              (attribute-value next))
+                            'location 'compile-element))
+                    (list
+                     (make-data-unless (string->path (attribute-value next))
+                                       (loop attrs (cdr processing))))))
                ((data-each)
                 (let* ((result (parse-data-each (attribute-value next)))
                        (name (first result))
@@ -304,9 +337,39 @@
 (define template-string
   (zero-or-more (any-of variable-expansion raw-text)))
 
+(define (curly-braces-balanced? str)
+  (let ((tokens (parse (zero-or-more
+                        (any-of (as-string
+                                 (one-or-more (none-of* (char-seq "{{")
+                                                        (char-seq "}}")
+                                                        item)))
+                                (char-seq "{{")
+                                (char-seq "}}")))
+                       (->parser-input str))))
+    (eq? 'closed
+         (fold (lambda (token state)
+                 (case state
+                   ((unbalanced) state)
+                   ((open)
+                    (cond ((string=? token "}}") 'closed)
+                          ((string=? token "{{") 'unbalanced)
+                          (else 'open)))
+                   ((closed)
+                    (cond ((string=? token "}}") 'unbalanced)
+                          ((string=? token "{{") 'open)
+                          (else 'closed)))))
+               'closed
+               tokens))))
+
 (define (compile-variables value)
   (assert (string? value))
-  (parse template-string (->parser-input value)))
+  (if (curly-braces-balanced? value)
+      (parse template-string (->parser-input value))
+      (abort (make-property-condition
+              'exn
+              'message
+              (sprintf "In text ~S variable should be escaped with \"{{\" before and  \"}}\""
+                       value)))))
 
 (define (compile-text node)
   (compile-variables node))
@@ -353,6 +416,8 @@
                             (collapse-syntax-tree (template-children x)))
              collapsed))
       ((template-children? x)
+       (cons x collapsed))
+      ((template-embed? x)
        (cons x collapsed))
       ((raw? x)
        (if (and (not (null? collapsed))
@@ -401,11 +466,18 @@
    tree))
 
 (define (template->scheme x)
-  `(hash-table-set!
-    (templates)
-    (quote ,(template-name x))
-    (lambda (data #!optional inner embed-data)
-      ,@(map ->scheme (template-children x)))))
+  `(if (hash-table-exists? (templates) (quote ,(template-name x)))
+       (abort (make-property-condition
+               'exn
+               'message "Template ~S is already defined and there is another template with the same name."
+               (symbol->string (quote ,(template-name x)))))
+       (hash-table-set!
+        (templates)
+        (quote ,(template-name x))
+        (make-compiled-template
+         ,(sxml->html5-string (template-src x))
+         (lambda (data #!optional inner embed-data)
+           ,@(map ->scheme (template-children x)))))))
 
 (define (raw->scheme x)
   `(write-string ,(raw-value x)))
@@ -431,29 +503,28 @@
     data))
 
 (define (template-call->scheme x)
-  `(let ((tmpl ,(if (symbol? (template-call-name x))
-                             `(quote ,(template-call-name x))
-                             `(string->symbol ,(compile-value-expansion
-                                                (template-call-name x))))))
-     (condition-case
-         ((hash-table-ref (templates) tmpl)
-          (list
-           ,@(map (lambda (attr)
-                    `(cons (quote ,(attribute-name attr))
-                           ,(compile-value-expansion (attribute-value attr))))
-                  (reverse (template-call-attributes x))))
-          (lambda ()
-            ,@(if (null? (template-call-children x))
-                  (list #f)
-                  (map ->scheme (template-call-children x))))
-          ,(template-call-embed x))
-       ((exn access)
-        (abort
-         (make-composite-condition
-          (make-property-condition
-           'exn
-           'message (sprintf "No such template: <~A>" tmpl)
-          (make-property-condition 'magery))))))))
+  `(let* ((tmpl-name ,(if (symbol? (template-call-name x))
+                          `(quote ,(template-call-name x))
+                          `(string->symbol ,(compile-value-expansion
+                                             (template-call-name x)))))
+          (tmpl (condition-case
+                    (compiled-template-render
+                     (hash-table-ref (templates) tmpl-name))
+                  ((exn access)
+                   (abort
+                    (make-property-condition
+                     'exn
+                     'message (sprintf "No such template: <~A>" tmpl-name)))))))
+         (tmpl (list
+                ,@(map (lambda (attr)
+                         `(cons (quote ,(attribute-name attr))
+                                ,(compile-value-expansion (attribute-value attr))))
+                       (reverse (template-call-attributes x))))
+               (lambda ()
+                 ,@(if (null? (template-call-children x))
+                       (list #f)
+                       (map ->scheme (template-call-children x))))
+               ,(template-call-embed x))))
 
 (define (conditional-data-embed->scheme x)
   `(when embed-data
@@ -468,6 +539,22 @@
 (define (template-children->scheme x)
   `(when inner (inner)))
 
+(define (template-embed->scheme x)
+  `(let* ((tmpl-name ,(if (symbol? (template-embed-name x))
+                          `(quote ,(template-embed-name x))
+                          `(string->symbol ,(compile-value-expansion
+                                             (template-embed-name x)))))
+          (src (condition-case
+                    (compiled-template-src
+                     (hash-table-ref (templates) tmpl-name))
+                  ((exn access)
+                   (abort
+                    (make-property-condition
+                     'exn
+                     'message (sprintf "No such template: <~A>" tmpl-name)))))))
+         (write-string src)))
+
+
 (define (->scheme x)
   (cond ((template? x) (template->scheme x))
         ((raw? x) (raw->scheme x))
@@ -479,6 +566,7 @@
         ((conditional-data-embed? x) (conditional-data-embed->scheme x))
         ((embedded-data? x) (embedded-data->scheme x))
         ((template-children? x) (template-children->scheme x))
+        ((template-embed? x) (template-embed->scheme x))
         (else
          (abort (make-property-condition
                  'exn

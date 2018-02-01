@@ -1,14 +1,19 @@
-(compile -O2 -d3 -s magery-compiler.scm -J)   
-(compile -O2 -d3 -s "magery-compiler.import.scm")
+(compile -O2 -d1 -s magery-serialize.scm -J)   
+(compile -O2 -d0 -s "magery-serialize.import.scm")
+
+(compile -O2 -d1 -s magery-compiler.scm -J)   
+(compile -O2 -d0 -s "magery-compiler.import.scm")
 
 (install-extension
   'magery-compiler
   '("magery-compiler.so"
-    "magery-compiler.import.so")
+    "magery-compiler.import.so"
+    "magery-serialize.so"
+    "magery-serialize.import.so")
 '((version "1.0.0")))
 
-(compile -O2 -d3 -s magery-runtime.scm -J)   
-(compile -O2 -d3 -s "magery-runtime.import.scm")
+(compile -O2 -d1 -s magery-runtime.scm -J)   
+(compile -O2 -d0 -s "magery-runtime.import.scm")
 
 (install-extension
   'magery-runtime
@@ -16,8 +21,8 @@
     "magery-runtime.import.so")
 '((version "1.0.0")))
 
-(compile -O2 -d3 -s magery.scm -J)   
-(compile -O2 -d3 -s "magery.import.scm")
+(compile -O2 -d1 -s magery.scm -J)   
+(compile -O2 -d0 -s "magery.import.scm")
 
 (install-extension
   'magery

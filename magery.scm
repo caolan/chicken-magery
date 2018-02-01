@@ -4,18 +4,16 @@
 (read-templates
  eval-templates
  compile-templates
- template-write)
+ template-write
+ templates
+ make-templates)
 
 (import chicken scheme)
 (use magery-compiler magery-runtime srfi-69 ports utils files)
 
 
 (define (eval-templates filename)
-  (let ((code (with-input-from-file filename read-templates)))
-    ;; TODO: remove debugging output
-    (write code)
-    (newline)
-    (eval code)))
+  (eval (with-input-from-file filename read-templates)))
 
 (define (compile-templates filename)
   (let ((tmp-file (create-temporary-file "scm")))
@@ -28,7 +26,7 @@
   (if (hash-table-exists? (templates) name)
       (with-output-to-port port
         (lambda ()
-          ((hash-table-ref (templates) name) data)
+          ((compiled-template-render (hash-table-ref (templates) name)) data)
           (newline)))
       (abort (make-composite-condition
               (make-property-condition

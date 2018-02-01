@@ -2,20 +2,34 @@
 
 ;; exports
 (templates
+ make-templates
  lookup
  stringify
  html-escape
  truthy?
  falsy?
- magery-each)
+ magery-each
+ make-compiled-template
+ compiled-template-render
+ compiled-template-src)
 
 (import chicken scheme)
 (use srfi-69 data-structures irregex srfi-13 srfi-133)
 
-(define templates
-  (make-parameter (make-hash-table
-                   test: eq?
-                   hash: symbol-hash)))
+
+(define-record compiled-template src render)
+(define-record-printer (compiled-template x out)
+  (fprintf out "#<compiled-template ~S>"
+           (compiled-template-src x)))
+
+
+(define (make-templates)
+  (make-hash-table
+   test: eq?
+   hash: symbol-hash))
+
+(define templates 
+  (make-parameter (make-templates)))
 
 (define (lookup path data)
   (cond
