@@ -28,7 +28,7 @@
                   error-msg
                   ((condition-property-accessor 'exn 'message) exn))
             (begin
-                  (eval-templates template-file)
+                  (magery-eval-file template-file)
                   (with-output-to-string
                     (lambda ()
                       (write-component 'app-main data)
@@ -39,7 +39,7 @@
           (test test-name
                 expected
                 (begin
-                  (eval-templates template-file)
+                  (magery-eval-file template-file)
                   (with-output-to-string
                     (lambda ()
                       (write-component 'app-main data)
@@ -51,7 +51,7 @@
 (test-group "render full page"
   (parameterize
       ((templates (make-templates)))
-    (eval-templates "./tests/fixtures1.html")
+    (magery-eval-file "./tests/fixtures1.html")
     (let ((data '((name . "world"))))
       (test "fixtures1.html"
             (string-append "<!DOCTYPE html>\n"
@@ -70,7 +70,7 @@
 (test-group "render html element as wrapper"
   (parameterize
       ((templates (make-templates)))
-    (eval-templates "./tests/fixtures2.html")
+    (magery-eval-file "./tests/fixtures2.html")
     (let ((data '((name . "world"))))
       (test "fixtures2.html"
             (string-append "<!DOCTYPE html>\n"
@@ -87,5 +87,17 @@
             (with-output-to-string
               (lambda ()
                 (write-page 'app-main data)))))))
+
+(test-group "load templates recursively from directory"
+  (parameterize
+      ((templates (make-templates)))
+    (magery-eval-directory "./tests/fixtures")
+    (let ((data '((name . "world"))))
+      (test "test-greeting"
+            "<div><h1>Hello, world!</h1></div>"
+            (with-output-to-string
+              (lambda ()
+                (write-component 'test-greeting data)))))))
+  
 
 (test-exit)
