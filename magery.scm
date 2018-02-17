@@ -36,7 +36,7 @@
               (make-property-condition 'magery)))))
 
 (define (write-page top-level-component data #!optional (port (current-output-port)))
-  (write-string "<!DOCTYPE html>\n" port)
+  (write-string "<!DOCTYPE html>\n" #f port)
   (write-component top-level-component data port)
   (newline))
 

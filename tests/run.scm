@@ -48,4 +48,44 @@
 (test-group "magery-tests suite"
   (for-each run-test test-dirs))
 
+(test-group "render full page"
+  (parameterize
+      ((templates (make-templates)))
+    (eval-templates "./tests/fixtures1.html")
+    (let ((data '((name . "world"))))
+      (test "fixtures1.html"
+            (string-append "<!DOCTYPE html>\n"
+                           "<html>\n"
+                           "        <head>\n"
+                           "            <title>Test page</title>\n"
+                           "        </head>\n"
+                           "        <body>\n"
+                           "            <p>Hello, world!</p>\n"
+                           "        </body>\n"
+                           "    </html>\n")
+            (with-output-to-string
+              (lambda ()
+                (write-page 'app-main data)))))))
+
+(test-group "render html element as wrapper"
+  (parameterize
+      ((templates (make-templates)))
+    (eval-templates "./tests/fixtures2.html")
+    (let ((data '((name . "world"))))
+      (test "fixtures2.html"
+            (string-append "<!DOCTYPE html>\n"
+                           "<html>\n"
+                           "        <head>\n"
+                           "            <title>Test page</title>\n"
+                           "        </head>\n"
+                           "        <body>\n"
+                           "            \n"
+                           "        <p>Hello, world!</p>\n"
+                           "    \n"
+                           "        </body>\n"
+                           "    </html>\n")
+            (with-output-to-string
+              (lambda ()
+                (write-page 'app-main data)))))))
+
 (test-exit)
