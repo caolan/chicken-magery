@@ -21,19 +21,38 @@
     (parameterize
         ((templates (make-templates)))
       (if error-expected
-          (test-error (sprintf "~A (error)" test-name)
-                      (begin
-                        (eval-templates template-file)
-                        (with-output-to-string
-                          (lambda () (template-write 'app-main data)))))
+          (handle-exceptions exn
+            (test (sprintf "~A (error)" test-name)
+                  error-msg
+                  ((condition-property-accessor 'exn 'message) exn))
+            (begin
+                  (magery-eval-file template-file)
+                  (with-output-to-string
+                    (lambda ()
+                      (write-component 'app-main data)
+                      (newline)))
+                  (test (sprintf "~A (error)" test-name)
+                        (sprintf "ERROR: ~A" error-msg)
+                        'NO-ERROR)))
           (test test-name
                 expected
                 (begin
-                  (eval-templates template-file)
+                  (magery-eval-file template-file)
                   (with-output-to-string
                     (lambda () (template-write 'app-main data)))))))))
 
 (test-group "magery-tests suite"
   (for-each run-test test-dirs))
 
+(test-group "load templates recursively from directory"
+  (parameterize
+      ((templates (make-templates)))
+    (magery-eval-directory "./tests/fixtures")
+    (let ((data '((name . "world"))))
+      (test "test-greeting"
+            "<div><h1>Hello, world!</h1></div>"
+            (with-output-to-string
+              (lambda ()
+                (write-component 'test-greeting data)))))))
+  
 (test-exit)
