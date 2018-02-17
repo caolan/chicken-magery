@@ -33,9 +33,6 @@
     data-if
     data-unless))
 
-(define COMPONENT-PASS-THROUGH-ATTRIBUTES
-  '(data-embed))
-
 
 (define-record template name src children)
 (define-record-printer (template x out)
@@ -52,12 +49,11 @@
   (fprintf out "#<template-embed ~S>"
            (template-embed-name x)))
 
-(define-record template-call name attributes embed children)
+(define-record template-call name attributes children)
 (define-record-printer (template-call x out)
-  (fprintf out "#<template-call ~S ~S embed:~S ~S>"
+  (fprintf out "#<template-call ~S ~S ~S>"
            (template-call-name x)
            (template-call-attributes x)
-           (template-call-embed x)
            (template-call-children x)))
 
 (define-record raw value)
@@ -87,13 +83,6 @@
            (data-each-iterable x)
            (data-each-children x)))
 
-(define-record embedded-data)
-(define-record-printer (embedded-data x out)
-  (fprintf out "#<embedded-data>"))
-
-(define-record conditional-data-embed)
-(define-record-printer (conditional-data-embed x out)
-  (fprintf out "#<conditional-data-embed>"))
 
 (define (magery-syntax-error message)
   (abort
@@ -180,8 +169,6 @@
                         (list (make-raw (sprintf " ~A" (attribute-name attr))))))
                  ;; if it's an interpolated string, boolean attribute is always true
                  (list (make-raw (sprintf " ~A" (attribute-name attr)))))))
-          ((eq? (attribute-name attr) 'data-embed)
-           (make-embedded-data))
           (else
            ;; render normal attribute
            (list (make-raw (sprintf " ~A=\"" (attribute-name attr)))
@@ -189,14 +176,55 @@
                  (make-raw "\"")))))
        (reverse attrs)))
 
-(define (compile-opening-tag name attrs #!optional component?)
+(define (compile-opening-tag name attrs)
   (list (make-raw (sprintf "<~A" name))
         (compile-attributes attrs)
-        (and component? (make-conditional-data-embed))
         (make-raw ">")))
 
 (define (compile-closing-tag name)
   (make-raw (sprintf "</~A>" name)))
+
+(define (whitespace? node)
+  (and (text? node) (string-every char-set:whitespace node)))
+
+(define (template-child-element node tag)
+  (let* ((child-elements (remove whitespace? (children node)))
+         (num (length child-elements)))
+    (cond
+     ((= num 0)
+      (abort (make-property-condition
+              'exn
+              'message
+              (sprintf
+               "Template ~S is empty. All templates must contain a single child element."
+               tag))))
+     ((= num 1)
+      (let ((child (car child-elements)))
+        (cond
+         ((attribute-exists? child 'data-if)
+          (abort (make-property-condition
+                  'exn
+                  'message
+                  (sprintf "Template ~S uses data-if attribute on top-level child element. Templates must always render a single top-level child element." tag))))
+         ((attribute-exists? child 'data-unless)
+          (abort (make-property-condition
+                  'exn
+                  'message
+                  (sprintf "Template ~S uses data-unless attribute on top-level child element. Templates must always render a single top-level child element." tag))))
+         ((attribute-exists? child 'data-each)
+          (abort (make-property-condition
+                  'exn
+                  'message
+                  (sprintf "Template ~S uses data-each attribute on top-level child element. Templates must always render a single top-level child element." tag))))
+         (else
+          child))))
+     (else
+      (abort (make-property-condition
+              'exn
+              'message
+              (sprintf
+               "Template ~S has more than one top-level child element. All templates must contain a single child element."
+               tag)))))))
 
 (define (compile-element node queue is-root)
   (case (tagname node)
@@ -208,9 +236,7 @@
                    (make-template
                     (string->symbol tag)
                     node
-                    `(,(compile-opening-tag tag (attributes node) #t)
-                      ,@(map (cut compile-node <> queue #f) (children node))
-                      ,(compile-closing-tag tag)))
+                    (compile-node (template-child-element node tag) queue #f))
                    (abort (make-property-condition
                            'exn
                            'message (sprintf "Template name ~S is incorrect, it's mandatory that template name include a \"-\" character"
@@ -225,7 +251,7 @@
      (make-template-children))
     ((template-embed)
      (if (attribute-exists? node 'template)
-         (make-template-embed (attribute-ref node 'template))
+         (list (make-template-embed (attribute-ref node 'template)))
          (abort (make-property-condition
                  'exn
                  'message "Not implemented: <template-embed> tag without template attribute"
@@ -279,21 +305,13 @@
             ((eq? (tagname node) 'template-call)
              (list (make-template-call
                     (attribute-ref node 'template)
-                    (filter (lambda (attr)
-                              (not (eq? (attribute-name attr) 'data-embed)))
-                            attrs)
-                    (and (attribute-exists? node 'data-embed)
-                         (string=? (attribute-ref node 'data-embed) "true"))
+                    attrs
                     (map (cut compile-node <> queue #f) (children node)))))
             ((string-contains (symbol->string (tagname node)) "-")
              ;; possible component
              (list (make-template-call
                     (tagname node)
-                    (filter (lambda (attr)
-                              (not (eq? (attribute-name attr) 'data-embed)))
-                            attrs)
-                    (and (attribute-exists? node 'data-embed)
-                         (string=? (attribute-ref node 'data-embed) "true"))
+                    attrs
                     (map (cut compile-node <> queue #f) (children node)))))
             (else
              ;; normal element
@@ -443,13 +461,8 @@
       ((template-call? x)
        (cons (make-template-call (template-call-name x)
                                  (template-call-attributes x)
-                                 (template-call-embed x)
                                  (collapse-syntax-tree (template-call-children x)))
              collapsed))
-      ((conditional-data-embed? x)
-       (cons x collapsed))
-      ((embedded-data? x)
-       (cons x collapsed))
       ((pair? x)
        (if (null? collapsed)
            (collapse-syntax-tree x)
@@ -469,14 +482,14 @@
   `(if (hash-table-exists? (templates) (quote ,(template-name x)))
        (abort (make-property-condition
                'exn
-               'message "Template ~S is already defined and there is another template with the same name."
-               (symbol->string (quote ,(template-name x)))))
+               'message (sprintf "Template ~S is already defined and there is another template with the same name."
+                                 (symbol->string (quote ,(template-name x))))))
        (hash-table-set!
         (templates)
         (quote ,(template-name x))
         (make-compiled-template
          ,(sxml->html5-string (template-src x))
-         (lambda (data #!optional inner embed-data)
+         (lambda (data #!optional inner)
            ,@(map ->scheme (template-children x)))))))
 
 (define (raw->scheme x)
@@ -514,7 +527,7 @@
                    (abort
                     (make-property-condition
                      'exn
-                     'message (sprintf "No such template: <~A>" tmpl-name)))))))
+                     'message (sprintf "Template ~S is used but it's not defined" (symbol->string tmpl-name))))))))
          (tmpl (list
                 ,@(map (lambda (attr)
                          `(cons (quote ,(attribute-name attr))
@@ -523,18 +536,7 @@
                (lambda ()
                  ,@(if (null? (template-call-children x))
                        (list #f)
-                       (map ->scheme (template-call-children x))))
-               ,(template-call-embed x))))
-
-(define (conditional-data-embed->scheme x)
-  `(when embed-data
-     ,(embedded-data->scheme x)))
-
-(define (embedded-data->scheme x)
-  `(begin
-     (write-string " data-context='")
-     (write-string (html-escape (json->string data) #t))
-     (write-string "'")))
+                       (map ->scheme (template-call-children x)))))))
 
 (define (template-children->scheme x)
   `(when inner (inner)))
@@ -551,7 +553,7 @@
                    (abort
                     (make-property-condition
                      'exn
-                     'message (sprintf "No such template: <~A>" tmpl-name)))))))
+                     'message (sprintf "Template ~S is used but it's not defined" (symbol->string tmpl-name))))))))
          (write-string src)))
 
 
@@ -563,8 +565,6 @@
         ((data-unless? x) (data-unless->scheme x))
         ((data-each? x) (data-each->scheme x))
         ((template-call? x) (template-call->scheme x))
-        ((conditional-data-embed? x) (conditional-data-embed->scheme x))
-        ((embedded-data? x) (embedded-data->scheme x))
         ((template-children? x) (template-children->scheme x))
         ((template-embed? x) (template-embed->scheme x))
         (else
