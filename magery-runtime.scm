@@ -88,7 +88,7 @@
      (case (string-ref (irregex-match-substring m) 0)
        ((#\<) "&lt;")
        ((#\>) "&gt;")
-       ((#\&) "&ampt;")
+       ((#\&) "&amp;")
        ((#\") (if keep-quot "\"" "&quot;"))
        ((#\') "&apos;")))))
 
