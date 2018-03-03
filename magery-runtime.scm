@@ -68,8 +68,8 @@
    ((number? x) (number->string x))
    ((eq? x 'undefined) "")
    ((eq? x 'null) "")
+   ((eq? x #f) "")
    ((eq? x #t) "true")
-   ((eq? x #f) "false")
    ((vector? x) (string-join (map stringify (vector->list x)) ","))
    ((or (pair? x) (null? x)) "[object Object]")
    (else
