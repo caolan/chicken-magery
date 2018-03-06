@@ -7,8 +7,6 @@
 
 (use magery-serialize
      data-structures
-     miscmacros
-     defstruct
      comparse
      gumbo
      utils
