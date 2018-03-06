@@ -467,10 +467,15 @@
 
 (define (template->scheme x)
   `(if (hash-table-exists? (templates) (quote ,(template-name x)))
-       (abort (make-property-condition
-               'exn
-               'message "Template ~S is already defined and there is another template with the same name."
-               (symbol->string (quote ,(template-name x)))))
+       (abort
+        (make-property-condition
+         'exn
+         'message
+         (sprintf
+          (string-append
+           "Template ~S is already defined and there is another template "
+           "with the same name.")
+          (symbol->string (quote ,(template-name x))))))
        (hash-table-set!
         (templates)
         (quote ,(template-name x))
@@ -514,7 +519,7 @@
                    (abort
                     (make-property-condition
                      'exn
-                     'message (sprintf "No such template: <~A>" tmpl-name)))))))
+                     'message (sprintf "No such template \"~A\"" tmpl-name)))))))
          (tmpl (list
                 ,@(map (lambda (attr)
                          `(cons (quote ,(attribute-name attr))
@@ -551,7 +556,7 @@
                    (abort
                     (make-property-condition
                      'exn
-                     'message (sprintf "No such template: <~A>" tmpl-name)))))))
+                     'message (sprintf "No such template \"~A\"" tmpl-name)))))))
          (write-string src)))
 
 

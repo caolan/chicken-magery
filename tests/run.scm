@@ -15,7 +15,8 @@
          (error-file (make-pathname dir "error.txt"))
          (data (call-with-input-file data-file read-json))
          (expected (read-all expected-file))
-         (error-msg (if (file-exists? error-file) (read-all error-file) #f))
+         (error-msg (string-trim-both
+                     (if (file-exists? error-file) (read-all error-file) #f)))
          (error-expected (and error-msg (not (string=? "" error-msg))))
          (test-name (pathname-strip-directory dir)))
     (parameterize
@@ -29,7 +30,7 @@
                   (magery-eval-file template-file)
                   (with-output-to-string
                     (lambda ()
-                      (write-component 'app-main data)
+                      (template-write 'app-main data)
                       (newline)))
                   (test (sprintf "~A (error)" test-name)
                         (sprintf "ERROR: ~A" error-msg)
@@ -50,9 +51,14 @@
     (magery-eval-directory "./tests/fixtures")
     (let ((data '((name . "world"))))
       (test "test-greeting"
-            "<div><h1>Hello, world!</h1></div>"
+	    (string-append
+	      "<test-greeting>\n"
+	      "    <example-wrapper>\n"
+	      "    <div><h1>Hello, world!</h1></div>\n"
+	      "</example-wrapper>\n"
+	      "</test-greeting>\n")
             (with-output-to-string
               (lambda ()
-                (write-component 'test-greeting data)))))))
+                (template-write 'test-greeting data)))))))
   
 (test-exit)

@@ -56,7 +56,7 @@
               (make-property-condition
                'exn
                'location 'template-write
-               'message (sprintf "No such template: ~S" name))
+               'message (sprintf "No such template \"~A\"" name))
               (make-property-condition 'magery)))))
 
 )
