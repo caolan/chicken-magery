@@ -9,7 +9,7 @@
      data-structures
      miscmacros
      defstruct
-     htmlprag
+     gumbo
      comparse
      utils
      srfi-1

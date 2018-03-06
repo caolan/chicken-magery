@@ -2,5 +2,5 @@
  (author "Caolan McMahon")
  (category web)
  (license "BSD")
- (depends htmlprag comparse srfi-133 sxml-transforms)
+ (depends gumbo comparse srfi-133 sxml-transforms)
  (test-depends test medea))
